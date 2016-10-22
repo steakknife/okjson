@@ -341,7 +341,7 @@ private
             end
           end
           if rubydoesenc?
-            a[w] = '' << uchar
+            a[w] = uchar.chr(''.encoding)
             w += 1
           else
             w += ucharenc(a, w, uchar)
