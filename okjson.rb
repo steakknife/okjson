@@ -28,7 +28,7 @@ require 'stringio'
 # https://golang.org/src/encoding/json/decode.go and
 # https://golang.org/src/unicode/utf8/utf8.go
 module OkJson
-  Upstream = '45'
+  Upstream = '45'.freeze
   extend self
 
 
@@ -43,9 +43,7 @@ module OkJson
   def decode(s)
     ts = lex(s)
     v, ts = textparse(ts)
-    if ts.length > 0
-      raise Error, 'trailing garbage'
-    end
+    raise Error, 'trailing garbage' if ts.length > 0
     v
   end
 
@@ -75,9 +73,9 @@ module OkJson
     when Array   then arrenc(x)
     when String  then strenc(x)
     when Numeric then numenc(x)
-    when true    then "true"
-    when false   then "false"
-    when nil     then "null"
+    when true    then True
+    when false   then False
+    when nil     then Null
     else
       raise Error, "cannot encode #{x.class}: #{x.inspect}"
     end
@@ -92,14 +90,12 @@ private
   # Note: this is almost the same as valparse,
   # except that it does not accept atomic values.
   def textparse(ts)
-    if ts.length <= 0
-      raise Error, 'empty'
-    end
+    raise Error, 'empty' unless ts.length > 0
 
     typ, _, val = ts[0]
     case typ
-    when '{' then objparse(ts)
-    when '[' then arrparse(ts)
+    when LBc then objparse(ts)
+    when LBr then arrparse(ts)
     else
       raise Error, "unexpected #{val.inspect}"
     end
@@ -109,14 +105,12 @@ private
   # Parses a "value" in the sense of RFC 4627.
   # Returns the parsed value and any trailing tokens.
   def valparse(ts)
-    if ts.length <= 0
-      raise Error, 'empty'
-    end
+    raise Error, 'empty' unless ts.length > 0
 
     typ, _, val = ts[0]
     case typ
-    when '{' then objparse(ts)
-    when '[' then arrparse(ts)
+    when LBc then objparse(ts)
+    when LBr then arrparse(ts)
     when :val,:str then [val, ts[1..-1]]
     else
       raise Error, "unexpected #{val.inspect}"
@@ -127,29 +121,23 @@ private
   # Parses an "object" in the sense of RFC 4627.
   # Returns the parsed value and any trailing tokens.
   def objparse(ts)
-    ts = eat('{', ts)
+    ts = eat(LBc, ts)
     obj = {}
 
-    if ts[0][0] == '}'
-      return obj, ts[1..-1]
-    end
+    return obj, ts[1..-1] if ts[0][0] == RBc
 
     k, v, ts = pairparse(ts)
     obj[k] = v
 
-    if ts[0][0] == '}'
-      return obj, ts[1..-1]
-    end
+    return obj, ts[1..-1] if ts[0][0] == RBc
 
     loop do
-      ts = eat(',', ts)
+      ts = eat(Com, ts)
 
       k, v, ts = pairparse(ts)
       obj[k] = v
 
-      if ts[0][0] == '}'
-        return obj, ts[1..-1]
-      end
+      return obj, ts[1..-1] if ts[0][0] == RBc
     end
   end
 
@@ -158,10 +146,8 @@ private
   # Returns the parsed values and any trailing tokens.
   def pairparse(ts)
     (typ, _, k), ts = ts[0], ts[1..-1]
-    if typ != :str
-      raise Error, "unexpected #{k.inspect}"
-    end
-    ts = eat(':', ts)
+    raise Error, "unexpected #{k.inspect}" unless typ == :str
+    ts = eat(Col, ts)
     v, ts = valparse(ts)
     [k, v, ts]
   end
@@ -170,37 +156,29 @@ private
   # Parses an "array" in the sense of RFC 4627.
   # Returns the parsed value and any trailing tokens.
   def arrparse(ts)
-    ts = eat('[', ts)
+    ts = eat(LBr, ts)
     arr = []
 
-    if ts[0][0] == ']'
-      return arr, ts[1..-1]
-    end
+    return arr, ts[1..-1] if ts[0][0] == RBr
 
     v, ts = valparse(ts)
     arr << v
 
-    if ts[0][0] == ']'
-      return arr, ts[1..-1]
-    end
+    return arr, ts[1..-1] if ts[0][0] == RBr
 
     loop do
-      ts = eat(',', ts)
+      ts = eat(Com, ts)
 
       v, ts = valparse(ts)
       arr << v
 
-      if ts[0][0] == ']'
-        return arr, ts[1..-1]
-      end
+      return arr, ts[1..-1] if ts[0][0] == RBr
     end
   end
 
 
   def eat(typ, ts)
-    if ts[0][0] != typ
-      raise Error, "expected #{typ} (got #{ts[0].inspect})"
-    end
+    raise Error, "expected #{typ} (got #{ts[0].inspect})" unless ts[0][0] == typ
     ts[1..-1]
   end
 
@@ -211,12 +189,8 @@ private
     ts = []
     while s.length > 0
       typ, lexeme, val = tok(s)
-      if typ == nil
-        raise Error, "invalid character at #{s[0,10].inspect}"
-      end
-      if typ != :space
-        ts << [typ, lexeme, val]
-      end
+      raise Error, "invalid character at #{s[0,10].inspect}" if typ.nil?
+      ts << [typ, lexeme, val] unless typ == :space
       s = s[lexeme.length..-1]
     end
     ts
@@ -237,31 +211,26 @@ private
   # token for :val and :str, otherwise
   # it is the lexeme.
   def tok(s)
-    case s[0]
-    when ?{ then ['{', s[0,1], s[0,1]]
-    when ?} then ['}', s[0,1], s[0,1]]
-    when ?: then [':', s[0,1], s[0,1]]
-    when ?, then [',', s[0,1], s[0,1]]
-    when ?[ then ['[', s[0,1], s[0,1]]
-    when ?] then [']', s[0,1], s[0,1]]
-    when ?n then nulltok(s)
-    when ?t then truetok(s)
-    when ?f then falsetok(s)
-    when ?" then strtok(s)
-    when Spc, ?\t, ?\n, ?\r then [:space, s[0,1], s[0,1]]
+    case c = s[0]
+    when LBc, RBc, Col, Com, LBr, RBr then [c, s[0,1], s[0,1]]
+    when N then nulltok(s)
+    when T then truetok(s)
+    when F then falsetok(s)
+    when DQu then strtok(s)
+    when Spc, TB, NL, CR then [:space, s[0,1], s[0,1]]
     else
       numtok(s)
     end
   end
 
 
-  def nulltok(s);  s[0,4] == 'null'  ? [:val, 'null',  nil]   : [] end
-  def truetok(s);  s[0,4] == 'true'  ? [:val, 'true',  true]  : [] end
-  def falsetok(s); s[0,5] == 'false' ? [:val, 'false', false] : [] end
+  def nulltok(s);  s[0,4] == Null  ? [:val, Null,  nil]   : [] end
+  def truetok(s);  s[0,4] == True  ? [:val, True,  true]  : [] end
+  def falsetok(s); s[0,5] == False ? [:val, False, false] : [] end
 
 
   def numtok(s)
-    m = /(-?(?:[1-9][0-9]+|[0-9]))([.][0-9]+)?([eE][+-]?[0-9]+)?/.match(s)
+    m = NumTokRE.match(s)
     if m && m.begin(0) == 0
       if !m[2] && !m[3]
         [:val, m[0], Integer(m[0])]
@@ -277,20 +246,18 @@ private
 
 
   def strtok(s)
-    m = /"([^"\\]|\\["\/\\bfnrt]|\\u[0-9a-fA-F]{4})*"/.match(s)
-    if ! m
-      raise Error, "invalid string literal at #{abbrev(s)}"
-    end
+    m = StrTokRE.match(s)
+    raise Error, "invalid string literal at #{abbrev(s)}" unless m
     [:str, m[0], unquote(m[0])]
   end
 
 
   def abbrev(s)
     t = s[0,10]
-    p = t['`']
+    p = t[BQu]
     t = t[0,p] if p
-    t = t + '...' if t.length < s.length
-    '`' + t + '`'
+    t += DOTS if t.length < s.length
+    BQu + t + BQu
   end
 
 
@@ -307,22 +274,22 @@ private
     r, w = 0, 0
     while r < q.length
       c = q[r]
-      if c == ?\\
+      if c == BS
         r += 1
         if r >= q.length
           raise Error, "string literal ends with a \"\\\": \"#{q}\""
         end
 
         case q[r]
-        when ?",?\\,?/,?'
+        when DQu,BS,FS,SQu
           a[w] = q[r]
           r += 1
           w += 1
-        when ?b,?f,?n,?r,?t
+        when B,F,N,R,T
           a[w] = Unesc[q[r]]
           r += 1
           w += 1
-        when ?u
+        when U
           r += 1
           uchar = begin
             hexdec4(q[r,4])
@@ -349,7 +316,7 @@ private
         else
           raise Error, "invalid escape char #{q[r]} in \"#{q}\""
         end
-      elsif c == ?" || c < Spc
+      elsif c == DQu || c < Spc
         raise Error, "invalid character in string literal \"#{q}\""
       else
         # Copy anything else byte-for-byte.
@@ -393,30 +360,40 @@ private
 
 
   def hexdec4(s)
-    if s.length != 4
-      raise Error, 'short'
-    end
+    raise Error, 'short' unless s.length == 4
     (nibble(s[0])<<12) | (nibble(s[1])<<8) | (nibble(s[2])<<4) | nibble(s[3])
   end
 
 
   def subst(u1, u2)
-    if Usurr1 <= u1 && u1 < Usurr2 && Usurr2 <= u2 && u2 < Usurr3
-      return ((u1-Usurr1)<<10) | (u2-Usurr2) + Usurrself
+    if highsurrogate?(u1) && losurrogate?(u2)
+      ((u1-Usurr1)<<10) | (u2-Usurr2) + Usurrself
+    else
+      Ucharerr
     end
-    return Ucharerr
+  end
+
+
+  def highsurrogate?(u)
+    HighSurrogates.include? u
+  end
+
+
+  def losurrogate?(u)
+    LowSurrogates.include? u
   end
 
 
   def surrogate?(u)
-    Usurr1 <= u && u < Usurr3
+    Surrogates.include? u
   end
 
 
   def nibble(c)
-    if ?0 <= c && c <= ?9 then c.ord - ?0.ord
-    elsif ?a <= c && c <= ?z then c.ord - ?a.ord + 10
-    elsif ?A <= c && c <= ?Z then c.ord - ?A.ord + 10
+    case (c = c.ord)
+    when Digit then c - Zero
+    when Lower then c - LowerA + 10
+    when Upper then c - UpperA + 10
     else
       raise Error, "invalid hex code #{c}"
     end
@@ -424,53 +401,45 @@ private
 
 
   def objenc(x)
-    '{' + x.map{|k,v| keyenc(k) + ':' + valenc(v)}.join(',') + '}'
+    LBc + x.map{|k,v| keyenc(k) + Col + valenc(v)}.join(Com) + RBc
   end
 
 
   def arrenc(a)
-    '[' + a.map{|x| valenc(x)}.join(',') + ']'
+    LBr + a.map{|x| valenc(x)}.join(Com) + RBr
   end
 
 
   def keyenc(k)
-    case k
-    when String then strenc(k)
-    else
-      raise Error, "Hash key is not a string: #{k.inspect}"
-    end
+    raise Error, "Hash key is not a string: #{k.inspect}" unless k.is_a?(String)
+    strenc(k)
   end
 
 
   def strenc(s)
     t = StringIO.new
-    t.putc(?")
+    t.putc(DQu)
     r = 0
 
     while r < s.length
-      case s[r]
-      when ?"  then t.print('\\"')
-      when ?\\ then t.print('\\\\')
-      when ?\b then t.print('\\b')
-      when ?\f then t.print('\\f')
-      when ?\n then t.print('\\n')
-      when ?\r then t.print('\\r')
-      when ?\t then t.print('\\t')
+      c = s[r]
+      if escaped = Esc[c]
+        t.print(BS)
+        t.print(escaped)
       else
-        c = s[r]
         # In ruby >= 1.9, s[r] is a codepoint, not a byte.
         if rubydoesenc?
           begin
             # c.ord will raise an error if c is invalid UTF-8
             if c.ord < Spc.ord
-              c = "\\u%04x" % [c.ord]
+              c = U4 % [c.ord]
             end
             t.write(c)
           rescue
             t.write(Ustrerr)
           end
         elsif c < Spc
-          t.write("\\u%04x" % c)
+          t.write(U4 % c)
         elsif Spc <= c && c <= ?~
           t.putc(c)
         else
@@ -480,7 +449,7 @@ private
       end
       r += 1
     end
-    t.putc(?")
+    t.putc(DQu)
     t.string
   end
 
@@ -489,7 +458,7 @@ private
     if ((x.nan? || x.infinite?) rescue false)
       raise Error, "Numeric cannot be represented: #{x}"
     end
-    "#{x}"
+    x.to_s
   end
 
 
@@ -568,12 +537,8 @@ private
   end
 
 
-  class Utf8Error < ::StandardError
-  end
-
-
-  class Error < ::StandardError
-  end
+  class Utf8Error < ::StandardError; end
+  class Error < ::StandardError; end
 
 
   Utagx = 0b1000_0000
@@ -589,12 +554,51 @@ private
   Uchar2max = (1<<11) - 1
   Uchar3max = (1<<16) - 1
   Ucharerr = 0xFFFD # unicode "replacement char"
-  Ustrerr = "\xef\xbf\xbd" # unicode "replacement char"
+  Ustrerr = "\xef\xbf\xbd".freeze # unicode "replacement char"
   Usurrself = 0x10000
   Usurr1 = 0xd800
   Usurr2 = 0xdc00
   Usurr3 = 0xe000
-
-  Spc = ' '[0]
-  Unesc = {?b=>?\b, ?f=>?\f, ?n=>?\n, ?r=>?\r, ?t=>?\t}
+  HighSurrogates = (Usurr1...Usurr2).freeze
+  LowSurrogates = (Usurr2..Usurr3).freeze
+  Surrogates = (Usurr1..Usurr3).freeze
+  U4    = "\\u%04x".freeze
+  True  = 'true'.freeze
+  False = 'false'.freeze
+  Null  = 'null'.freeze
+  Dots  = '...'.freeze
+  FS  = '/'.freeze
+  BS  = "\\".freeze
+  NL  = "\n".freeze
+  CR  = "\r".freeze
+  TB  = "\t".freeze
+  BK  = "\b".freeze
+  FF  = "\f".freeze
+  B   = 'b'.freeze
+  F   = 'f'.freeze
+  N   = 'n'.freeze
+  R   = 'r'.freeze
+  T   = 't'.freeze
+  U   = 'u'.freeze
+  LBc = '{'.freeze
+  RBc = '}'.freeze
+  LBr = '['.freeze
+  RBr = ']'.freeze
+  DQu = '"'.freeze
+  SQu = "'".freeze
+  BQu = '`'.freeze
+  Col = ':'.freeze
+  Com = ','.freeze
+  Spc = ' '.freeze
+  Unesc  = {B=>BK, F=>FF, N=>NL, R=>CR, T=>TB}.freeze
+  Esc    = Hash[Unesc.map(&:reverse) + [[BS, BS], [DQu, DQu]]].freeze
+  Zero   = '0'.ord
+  Nine   = '9'.ord
+  Digit  = (Zero..'9'.ord).freeze
+  LowerA = 'a'.ord
+  Lower  = (LowerA..'z'.ord).freeze
+  UpperA = 'A'.ord
+  Upper  = (UpperA..'Z'.ord).freeze
+  NumTokRE = /(-?(?:[1-9][0-9]+|[0-9]))([.][0-9]+)?([eE][+-]?[0-9]+)?/.freeze
+  StrTokRE = /"([^"\\]|\\["\/\\bfnrt]|\\u[0-9a-fA-F]{4})*"/.freeze
 end
