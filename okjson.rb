@@ -43,7 +43,7 @@ module OkJson
   def decode(s)
     ts = lex(s)
     v, ts = textparse(ts)
-    raise Error, 'trailing garbage' if ts.length > 0
+    raise Error, 'trailing garbage' unless ts.empty?
     v
   end
 
@@ -90,7 +90,7 @@ private
   # Note: this is almost the same as valparse,
   # except that it does not accept atomic values.
   def textparse(ts)
-    raise Error, 'empty' unless ts.length > 0
+    raise Error, 'empty' if ts.empty?
 
     typ, _, val = ts[0]
     case typ
@@ -105,7 +105,7 @@ private
   # Parses a "value" in the sense of RFC 4627.
   # Returns the parsed value and any trailing tokens.
   def valparse(ts)
-    raise Error, 'empty' unless ts.length > 0
+    raise Error, 'empty' if ts.empty?
 
     typ, _, val = ts[0]
     case typ
@@ -124,11 +124,13 @@ private
     ts = eat(LBc, ts)
     obj = {}
 
+    raise Error, 'unexpected end of object' if ts.empty?
     return obj, ts[1..-1] if ts[0][0] == RBc
 
     k, v, ts = pairparse(ts)
     obj[k] = v
 
+    raise Error, 'unexpected end of object' if ts.empty?
     return obj, ts[1..-1] if ts[0][0] == RBc
 
     loop do
@@ -137,6 +139,7 @@ private
       k, v, ts = pairparse(ts)
       obj[k] = v
 
+      raise Error, 'unexpected end of object' if ts.empty?
       return obj, ts[1..-1] if ts[0][0] == RBc
     end
   end
@@ -159,11 +162,13 @@ private
     ts = eat(LBr, ts)
     arr = []
 
+    raise Error, 'unexpected end of array' if ts.empty?
     return arr, ts[1..-1] if ts[0][0] == RBr
 
     v, ts = valparse(ts)
     arr << v
 
+    raise Error, 'unexpected end of array' if ts.empty?
     return arr, ts[1..-1] if ts[0][0] == RBr
 
     loop do
@@ -172,12 +177,14 @@ private
       v, ts = valparse(ts)
       arr << v
 
+      raise Error, 'unexpected end of array' if ts.empty?
       return arr, ts[1..-1] if ts[0][0] == RBr
     end
   end
 
 
   def eat(typ, ts)
+    raise Error, 'short' if ts.empty?
     raise Error, "expected #{typ} (got #{ts[0].inspect})" unless ts[0][0] == typ
     ts[1..-1]
   end
@@ -187,7 +194,7 @@ private
   # excluding white space (as defined in RFC 4627).
   def lex(s)
     ts = []
-    while s.length > 0
+    until s.empty?
       typ, lexeme, val = tok(s)
       raise Error, "invalid character at #{s[0,10].inspect}" if typ.nil?
       ts << [typ, lexeme, val] unless typ == :space
@@ -308,7 +315,7 @@ private
             end
           end
           if rubydoesenc?
-            a[w] = uchar.chr(''.encoding)
+            a[w] = uchar.chr(StrEncoding)
             w += 1
           else
             w += ucharenc(a, w, uchar)
@@ -366,7 +373,7 @@ private
 
 
   def subst(u1, u2)
-    if highsurrogate?(u1) && losurrogate?(u2)
+    if highsurrogate?(u1) && lowsurrogate?(u2)
       ((u1-Usurr1)<<10) | (u2-Usurr2) + Usurrself
     else
       Ucharerr
@@ -379,7 +386,7 @@ private
   end
 
 
-  def losurrogate?(u)
+  def lowsurrogate?(u)
     LowSurrogates.include? u
   end
 
@@ -590,6 +597,7 @@ private
   Col = ':'.freeze
   Com = ','.freeze
   Spc = ' '.freeze
+  StrEncoding = ''.encoding.freeze
   Unesc  = {B=>BK, F=>FF, N=>NL, R=>CR, T=>TB}.freeze
   Esc    = Hash[Unesc.map(&:reverse) + [[BS, BS], [DQu, DQu]]].freeze
   Zero   = '0'.ord
