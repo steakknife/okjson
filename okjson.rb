@@ -236,8 +236,15 @@ private
   def falsetok(s); s[0,5] == False ? [:val, False, false] : [] end
 
 
+  def match(s, re)
+    s.match re
+  rescue ArgumentError => e
+    raise Utf8Error, e.message
+  end
+
+
   def numtok(s)
-    m = NumTokRE.match(s)
+    m = match(s, NumTokRE)
     if m && m.begin(0) == 0
       if !m[2] && !m[3]
         [:val, m[0], Integer(m[0])]
@@ -253,7 +260,7 @@ private
 
 
   def strtok(s)
-    m = StrTokRE.match(s)
+    m = match(s, StrTokRE)
     raise Error, "invalid string literal at #{abbrev(s)}" unless m
     [:str, m[0], unquote(m[0])]
   end
