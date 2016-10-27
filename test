@@ -1,44 +1,60 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -e
 
 : ${RUBY:=ruby}
 
-enc() {
-    $RUBY -r ./okjson -e 'puts(OkJson.encode(eval($stdin.read)))'
+must_enc() {
+    "$RUBY" -r ./okjson -e 'puts(OkJson.encode(eval($stdin.read)))' < "$1"
 }
 
-cycle() {
-    $RUBY -r ./okjson -e 'puts(OkJson.encode(OkJson.decode($stdin.read)))'
+must_parse() {
+    "$RUBY" -r ./okjson -e 'puts(OkJson.encode(OkJson.decode($stdin.read)))' < "$1"
+}
+
+must_not_parse() {
+  if must_parse "$1" 2>/dev/null; then
+    echo
+    exit 1
+  fi
+}
+
+must_not_enc() {
+  if must_enc "$1"; then
+    echo >&2 expected error
+    exit 1
+  fi
 }
 
 fs=$*
-if test -z "$fs"
-then fs=`echo t/*.{json,rb}`
+if [ -z "$fs" ]; then
+  fs=`echo t/*.{json,rb}`
 fi
 
 trap 'echo $RUBY; echo $f' EXIT
-for f in $fs
-do
-    case $f in
+for f in $fs; do
+    case "$f" in
     t/valid*.json)
-        cycle <$f >/dev/null
-        diff $f.exp <(cycle <$f 2>/dev/null)
+        diff "$f".exp <(must_parse "$f")
         ;;
     t/invalid*.json)
-        if cycle <$f 2>/dev/null
-        then echo; exit 1
-        fi
+        must_not_parse "$f"
         ;;
     t/encode*.rb)
-        enc <$f >/dev/null
-        diff $f.exp <(enc <$f 2>/dev/null)
+        diff "$f".exp <(must_enc "$f")
         ;;
     t/err*.rb)
-        if enc <$f 2>/dev/null
-        then echo >&2 expected error; exit 1
-        fi
+        must_not_enc "$f"
         ;;
     esac
+done
+for f in JSONTestSuite/test_parsing/*.json; do
+  case "$f" in
+    JSONTestSuite/test_parsing/y_*.json)
+        must_parse "$f"
+        ;;
+    JSONTestSuite/test_parsing/n_*.json)
+        must_not_parse "$f"
+        ;;
+  esac
 done
 trap - EXIT
